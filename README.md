@@ -1,11 +1,7 @@
-# COOD: 
+# COOD: Towards More Trustworthy ML Models for Code: Detecting Out-of-Distribution via Multi-modal Contrastive Learning
 
 ## Introduction
-This is the official codebase for the paper "Combining Call Graphs and Neural Code Semantics to Improve Automated Impact Analysis"
-
-## Fine-tuned models
-
-The pretrained models which are fine-tuned for code search is available here: https://drive.google.com/drive/folders/1nakEhOtRPdI35rgUYDbNY6OWSBSL1aCb
+This is the official codebase for the paper "Towards More Trustworthy ML Models for Code: Detecting Out-of-Distribution via Multi-modal Contrastive Learning"
 
 ## Training Prerequisites
 - CUDA 11.0
@@ -16,7 +12,8 @@ The pretrained models which are fine-tuned for code search is available here: ht
 ## Reproduce the results
 
 ```bash
-git clone https://anonymous.4open.science/r/Athena-6557/
-cd athena
-python main.py
+git clone https://anonymous.4open.science/r/COOD-4EA6
+cd COOD
+python run.py --train
+python run.py --test_baseline_metrics
 ```
