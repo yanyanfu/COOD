@@ -17,7 +17,7 @@ performance to several recent pretrained models.
 - pytorch 1.8.0
 - torchvision 0.9.0
 
-## dataset & evaluation benchmark
+## Dataset & Evaluation benchmark
 
 To acquire the training and testing datasets, please run the preprocess.py and preprocess.ipynb under each subfolder of the data folder. Then, the OOD data would be extracted automatically based on the dataloader.py file when you train and evaluate the models.
 
