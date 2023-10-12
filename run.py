@@ -29,10 +29,9 @@ if __name__ == "__main__":
     parser.add_argument('--test', dest='test', action='store_true')
     parser.add_argument('--test_main_task', dest='test_main_task', action='store_true')
     parser.add_argument('--test_baseline_metrics', dest='test_baseline_metrics', action='store_true')
-    parser.add_argument('--test_S2', dest='test_S2', action='store_true')
     parser.add_argument('--ddp', dest='ddp', action='store_true')
     parser.add_argument('--gpu', type=int, default=1)
-    parser.add_argument('--seed', type=int, default=2)
+    parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--model_path', type=str, default=None)
     parser.set_defaults(train=False)
     parser.set_defaults(test=False)
@@ -48,10 +47,6 @@ if __name__ == "__main__":
     if args.train:
         trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
         trainer.train()
-            
-    elif args.test:
-        trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
-        trainer.test(args.model_path)
 
     elif args.test_main_task:
         trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
@@ -60,7 +55,7 @@ if __name__ == "__main__":
     elif args.test_baseline_metrics:
         trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
         trainer.test_baseline_metrics(args.model_path)
-        
+    
     else:
         trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
-        trainer.test_S2(args.model_path)
+        trainer.test(args.model_path)

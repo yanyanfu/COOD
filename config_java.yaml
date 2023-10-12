@@ -1,0 +1,43 @@
+mode: "wsup"
+task: "codesearch"
+gpu_ids: [7]
+anom_dataset: "python"
+test_dataset: "java"
+n_epochs: 10
+learning_rate: 0.00001
+lambda_bc: 0.2
+lambda_cl: 1.0
+contrastive_loss: "margin"
+margin: 0.4
+temperature: 1.0
+anom_score: "softmax"
+threshold: null
+
+model:
+  pretrained: True
+  encoder: "microsoft/unixcoder-base"
+  task: "codesearch"
+  num_features: 768
+  dropout: 0.1
+  num_classes: 2
+  classifier: "dense"
+  freeze_layers: null
+
+dataset:
+  name: "java"
+  root: "./data/"
+  mode: "wsup"
+  batch_size: 64
+  num_workers: 16
+  code_col: "code"
+  text_col: "text"
+  raw_col: "raw"
+  label_col: "label"
+  tokenizer: "microsoft/unixcoder-base"
+  code_len: 256
+  text_len: 128
+  buggy_ratio: 0.01
+  shuffle_ratio: 0.01
+  wrong_text_ratio: 0.01
+  out_domain_ratio: 0.01
+  anom_test: 0.01
