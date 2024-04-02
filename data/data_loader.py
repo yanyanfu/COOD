@@ -1,90 +1,23 @@
 import os
 import copy
-import subprocess
 import numpy as np
 import pandas as pd
 import json
 from typing import Any, Union, List
 from tqdm import tqdm
 from collections import Counter
-# import code search net dataset from huggingface
-# from datasets import load_dataset
 
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset, ConcatDataset, random_split
+from torch.utils.data import Dataset, DataLoader, Subset
 from torch.utils.data.distributed import DistributedSampler
 
 from transformers import RobertaTokenizer
 import spacy
 nlp = spacy.load('en_core_web_sm')
-# import torchtext
 
-from data.parser import DFG_python,DFG_java,DFG_ruby,DFG_go,DFG_php,DFG_javascript
-from data.parser import (remove_comments_and_docstrings,
-                   tree_to_token_index,
-                   index_to_code_token,
-                   tree_to_variable_index)
-from data.stopwords import STOPWORDS_PYTHON, STOPWORDS_JAVA
-# from baseline.bpe import BpeVocabulary
 from spacy.lang.en import English
 from spacy.tokens.token import Token
 
-from tree_sitter import Language, Parser
-dfg_function={
-    'python':DFG_python,
-    'java':DFG_java,
-    'ruby':DFG_ruby,
-    'go':DFG_go,
-    'php':DFG_php,
-    'javascript':DFG_javascript
-}
-
-#load parsers
-PARSER = {}        
-for lang in dfg_function:
-    LANGUAGE = Language('data/parser/my-languages.so', lang)
-    parser = Parser()
-    parser.set_language(LANGUAGE) 
-    parser = [parser,dfg_function[lang]]    
-    PARSER[lang]= parser
-
-def extract_dataflow(code, parser, lang):
-    #remove comments
-    try:
-        code=remove_comments_and_docstrings(code,lang)
-    except:
-        pass    
-    #obtain dataflow
-    if lang=="php":
-        code="<?php"+code+"?>"    
-    try:
-        tree = parser[0].parse(bytes(code,'utf8'))    
-        root_node = tree.root_node  
-        tokens_index=tree_to_token_index(root_node)     
-        code=code.split('\n')
-        code_tokens=[index_to_code_token(x,code) for x in tokens_index]  
-        index_to_code={}
-        for idx,(index,code) in enumerate(zip(tokens_index,code_tokens)):
-            index_to_code[index]=(idx,code)  
-        try:
-            DFG,_=parser[1](root_node,index_to_code,{}) 
-        except:
-            DFG=[]
-        DFG=sorted(DFG,key=lambda x:x[1])
-        indexs=set()
-        for d in DFG:
-            if len(d[-1])!=0:
-                indexs.add(d[1])
-            for x in d[-1]:
-                indexs.add(x)
-        new_DFG=[]
-        for d in DFG:
-            if d[1] in indexs:
-                new_DFG.append(d)
-        dfg=new_DFG
-    except:
-        dfg=[]
-    return code_tokens,dfg
 
 def fixed_token_shuffle(idx, 
                         mask, 
@@ -113,6 +46,7 @@ def fixed_token_shuffle(idx,
             if same_pos == 0:
                 break
     idx[unfrozen_indices] = unfrozen_set
+
 
 def randomize_shuffle(text,
                       retain_stop=False,
@@ -163,6 +97,7 @@ def randomize_shuffle(text,
     )
     return new_text, indx, ch, mask
 
+
 class AnomalyDataset(Dataset):
     def __init__(self, 
                  name, 
@@ -171,7 +106,7 @@ class AnomalyDataset(Dataset):
                  code_col='code',
                  text_col='text',
                  label_col='label',
-                 raw_col='raw',
+                 url_col='url',
                  tokenizer=None,
                  code_len=256,
                  text_len=128,
@@ -206,7 +141,7 @@ class AnomalyDataset(Dataset):
         self.code_col = self.data.columns.get_loc(code_col)
         self.text_col = self.data.columns.get_loc(text_col)
         self.label_col = self.data.columns.get_loc(label_col)
-        self.raw_col = self.data.columns.get_loc(raw_col)
+        self.url_col = self.data.columns.get_loc(url_col)
 
         self.tokenizer = tokenizer
         self.code_len = code_len
@@ -258,6 +193,7 @@ class AnomalyDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
+
 class AnomalyDatasetWrapper(object):
     def __init__(self,
                  name,
@@ -268,7 +204,7 @@ class AnomalyDatasetWrapper(object):
                  code_col='code',
                  text_col='text',
                  label_col='label',
-                 raw_col='raw',
+                 url_col='url',
                  tokenizer=None,
                  code_len=256,
                  text_len=128,
@@ -290,7 +226,7 @@ class AnomalyDatasetWrapper(object):
         self.code_col = code_col
         self.text_col = text_col
         self.label_col = label_col
-        self.raw_col = raw_col
+        self.url_col = url_col
 
         if self.mode == 'unsup':
             self.shuffle_ratio = self.buggy_ratio = self.out_domain_ratio = self.wrong_text_ratio = 0.0
@@ -305,34 +241,20 @@ class AnomalyDatasetWrapper(object):
         
         if baseline:
             print('Building vocab counter on train set...')
-            # def code_max_length(tokens):
-            #     return tokens[:code_len]
-            # def text_max_length(tokens):
-            #     return tokens[:text_len]
-            # code_tokenizer = torchtext.data.Field()
-            # text_tokenizer = torchtext.data.Field()
-            # data_train = torchtext.data.TabularDataset(path=os.path.join(root, name, 'data_vocab.json'),
-            #                                            format='json', 
-            #                                            fields={code_col: ('code', code_tokenizer), text_col: ('text', text_tokenizer)})
-            # code_tokenizer.build_vocab(data_train, max_size=10000, min_freq=10)
-            # text_tokenizer.build_vocab(data_train, max_size=10000, min_freq=10)
-            # print(f'Code vocab size: {len(code_tokenizer.vocab):,}')
-            # print(f'Text vocab size: {len(text_tokenizer.vocab):,}')
-            # self.tokenizer = (code_tokenizer, text_tokenizer)
         else:
             self.tokenizer = RobertaTokenizer.from_pretrained(tokenizer if tokenizer is not None else 'roberta-base', do_lower_case=True)
 
     def _get_shuffled_sample(self, dataset):
         print('Shuffling codes...')
-
+        non_anom_indices = [i for i in range(len(dataset)) if dataset.anom_label[i] == 0]
         shuffle_sample_size = max(int(len(dataset) * dataset.shuffle_ratio), 2)
         if shuffle_sample_size % 2 == 0:
             shuffle_sample_size -= 1
-        shuffle_indices = np.random.choice(range(len(dataset)), shuffle_sample_size, replace=False)
+        shuffle_indices = np.random.choice(non_anom_indices, shuffle_sample_size, replace=False)
         new_indices = np.flip(shuffle_indices)
         dataset.data.iloc[shuffle_indices, dataset.text_col] = dataset.data.iloc[new_indices, dataset.text_col].tolist()
         dataset.anom_label[shuffle_indices] = 2
-        
+
         return dataset
 
     def _get_wrong_text_sample(self, dataset, lang='en'):
@@ -359,15 +281,15 @@ class AnomalyDatasetWrapper(object):
 
     def _get_buggy_sample(self, dataset, buggy_dataset=None):
         if buggy_dataset is None:
-            buggy_dataset = dataset.name + '-ood'
+            buggy_dataset = dataset.name + '-buggy'
         print('Getting samples from {}...'.format(buggy_dataset))
-        buggy_sample_size = int(len(dataset) * dataset.out_domain_ratio)
+        buggy_sample_size = int(len(dataset) * dataset.buggy_ratio)
         buggy_sample = AnomalyDataset(buggy_dataset,
                                     self.root,
                                     mode=self.mode,
                                     code_col=self.code_col,
                                     text_col=self.text_col,
-                                    raw_col=self.raw_col,
+                                    url_col=self.url_col,
                                     label_col=self.label_col,
                                     tokenizer=self.tokenizer,
                                     code_len=self.code_len,
@@ -378,16 +300,23 @@ class AnomalyDatasetWrapper(object):
         if len(buggy_sample) > buggy_sample_size:
             buggy_indices = np.random.choice(len(buggy_sample), buggy_sample_size, replace=False)
             buggy_sample.data = buggy_sample.data.iloc[buggy_indices, :]
+        
+        replace_indices = dataset.data[dataset.data['url'].isin(buggy_sample.data['url'])].index.tolist()
+        if len(replace_indices) < len(buggy_sample):
+            left_indices = dataset.data[~dataset.data['url'].isin(buggy_sample.data['url'])].index.tolist()
+            replace_indices.extend(np.random.choice(left_indices, len(buggy_sample)-len(replace_indices), replace=False))
 
-        non_anom_indices = [i for i in range(len(dataset)) if dataset.anom_label[i] == 0]
-        replace_indices = np.random.choice(non_anom_indices, buggy_sample_size, replace=False)
         for i, j in tqdm(zip(replace_indices, range(len(buggy_sample))), total=len(buggy_sample)):
             dataset.data.iloc[i, dataset.code_col] = buggy_sample.data.iloc[j, buggy_sample.code_col]
             dataset.data.iloc[i, dataset.text_col] = buggy_sample.data.iloc[j, buggy_sample.text_col]
+            dataset.data.iloc[i, dataset.url_col] = buggy_sample.data.iloc[j, buggy_sample.url_col]
             dataset.anom_label[i] = 4
+
         return dataset
 
-    def _get_out_domain_sample(self, dataset, anom_dataset):
+    def _get_out_domain_sample(self, dataset, anom_dataset=None):
+        if anom_dataset is None:
+            anom_dataset = dataset.name + '-so'
         print('Getting samples from {}...'.format(anom_dataset))
         anom_sample_size = int(len(dataset) * dataset.out_domain_ratio)
         anom_sample = AnomalyDataset(anom_dataset,
@@ -395,7 +324,7 @@ class AnomalyDatasetWrapper(object):
                                 mode=self.mode,
                                 code_col=self.code_col,
                                 text_col=self.text_col,
-                                raw_col=self.raw_col,
+                                url_col=self.url_col,
                                 label_col=self.label_col,
                                 tokenizer=self.tokenizer,
                                 code_len=self.code_len,
@@ -406,29 +335,20 @@ class AnomalyDatasetWrapper(object):
         if len(anom_sample) > anom_sample_size:
             anom_indices = np.random.choice(len(anom_sample), anom_sample_size, replace=False)
             anom_sample.data = anom_sample.data.iloc[anom_indices, :]
-        # anom_sample.anom_label = [1] * len(anom_sample)
 
         non_anom_indices = [i for i in range(len(dataset)) if dataset.anom_label[i] == 0]
-        replace_indices = np.random.choice(non_anom_indices, anom_sample_size, replace=False)
+        replace_indices = np.random.choice(non_anom_indices, len(anom_sample), replace=False)
         for i, j in tqdm(zip(replace_indices, range(len(anom_sample))), total=len(anom_sample)):
             dataset.data.iloc[i, dataset.code_col] = anom_sample.data.iloc[j, anom_sample.code_col]
             dataset.data.iloc[i, dataset.text_col] = anom_sample.data.iloc[j, anom_sample.text_col]
             dataset.anom_label[i] = 1
 
-        # new_dataset = Subset(dataset, np.setdiff1d(range(len(dataset)), replace_indices))
-        # dataset = ConcatDataset([new_dataset, anom_sample])
         return dataset
     
     def get_train_loaders(self, 
-                          anom_dataset='cosqa',
                           world_size=None,
                           rank=None,
                           dataset_load = 'train'):
-
-        if world_size is not None and rank is not None:
-            out_dir = 'buggy{}'.format(rank)
-        else:
-            out_dir = 'buggy0'
 
         dataset = AnomalyDataset(self.name,
                              self.root,
@@ -436,6 +356,7 @@ class AnomalyDatasetWrapper(object):
                              code_col=self.code_col,
                              text_col=self.text_col,
                              label_col=self.label_col,
+                             url_col=self.url_col,
                              tokenizer=self.tokenizer,
                              code_len=self.code_len,
                              text_len=self.text_len,
@@ -445,18 +366,15 @@ class AnomalyDatasetWrapper(object):
                              out_domain_ratio=self.out_domain_ratio,
                              dataset_load = dataset_load,
                              baseline=self.baseline)
-
-        if dataset.shuffle_ratio > 0:
-            dataset = self._get_shuffled_sample(dataset)
-
+        
         if dataset.buggy_ratio > 0:
             dataset = self._get_buggy_sample(dataset)
-
+        if dataset.out_domain_ratio > 0:
+            dataset = self._get_out_domain_sample(dataset)       
+        if dataset.shuffle_ratio > 0:
+            dataset = self._get_shuffled_sample(dataset)
         if dataset.wrong_text_ratio > 0:
             dataset = self._get_wrong_text_sample(dataset)
-
-        if dataset.out_domain_ratio > 0:
-            dataset = self._get_out_domain_sample(dataset, anom_dataset)
 
         print('Scenario 1: {}, Scenario 2: {}, Scenario 3: {}, Scenario 4: {}, ID: {}'.format(
             sum(dataset.anom_label == 1),
@@ -469,7 +387,6 @@ class AnomalyDatasetWrapper(object):
         if world_size is not None and rank is not None:
             train_sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
             train_loader = DataLoader(dataset, batch_size=self.batch_size, pin_memory=True, sampler=train_sampler)
-        
         else:
             train_loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, persistent_workers=True)
 
@@ -477,7 +394,6 @@ class AnomalyDatasetWrapper(object):
 
     def get_test_loaders(self, 
                          test_dataset,
-                         anom_dataset='cosqa',
                          test_type='anom',
                          dataset_load = 'test',
                          world_size=None,
@@ -488,6 +404,7 @@ class AnomalyDatasetWrapper(object):
             test_anom_ratio = 0.0
 
         test_shuffle_ratio = test_anom_ratio
+        # test_shuffle_ratio = 0.0
         if test_type != 'anom':
             test_shuffle_ratio = 0.0
 
@@ -497,6 +414,7 @@ class AnomalyDatasetWrapper(object):
                                 code_col=self.code_col,
                                 text_col=self.text_col,
                                 label_col=self.label_col,
+                                url_col=self.url_col,
                                 tokenizer=self.tokenizer,
                                 code_len=self.code_len,
                                 text_len=self.text_len,
@@ -506,15 +424,14 @@ class AnomalyDatasetWrapper(object):
                                 out_domain_ratio=test_anom_ratio,
                                 dataset_load=dataset_load,
                                 baseline=self.baseline)
-        
+        if dataset.buggy_ratio > 0:
+            dataset = self._get_buggy_sample(dataset)      
         if dataset.shuffle_ratio > 0:
             dataset = self._get_shuffled_sample(dataset)
-        if dataset.buggy_ratio > 0:
-            dataset = self._get_buggy_sample(dataset)
         if dataset.wrong_text_ratio > 0:
             dataset = self._get_wrong_text_sample(dataset)
         if dataset.out_domain_ratio > 0:
-            dataset = self._get_out_domain_sample(dataset, anom_dataset)
+            dataset = self._get_out_domain_sample(dataset)
 
         print('Scenario 1: {}, Scenario 2: {}, Scenario 3: {}, Scenario 4: {}, ID: {}'.format(
             sum(dataset.anom_label == 1),

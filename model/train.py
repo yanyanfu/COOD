@@ -63,9 +63,9 @@ def plot_distribution(test_score, threshold_score, test_label, img_path):
     bins = np.linspace(0.0, 1.0, 100)
     ax.hist(test_score[test_label >= 0], bins=bins, alpha=0.5, color='#7f7f7f', align='mid', label='ID')
     ax.hist(test_score[test_label == -1], bins=bins, alpha=0.5, color='#1f77b4', align='mid', label='Scenario 1')
-    ax.hist(test_score[test_label == -2], bins=bins, alpha=0.5, color='#ff7f0e', align='mid', label='Scenario 2')
-    ax.hist(test_score[test_label == -3], bins=bins, alpha=0.5, color='#2ca02c', align='mid', label='Scenario 3')
-    ax.hist(test_score[test_label == -4], bins=bins, alpha=0.5, color='#e6b8af', align='mid', label='Scenario 4')
+    ax.hist(test_score[test_label == -3], bins=bins, alpha=0.5, color='#ff7f0e', align='mid', label='Scenario 2')
+    ax.hist(test_score[test_label == -4], bins=bins, alpha=0.5, color='#2ca02c', align='mid', label='Scenario 3')
+    # ax.hist(test_score[test_label == -4], bins=bins, alpha=0.5, color='#e6b8af', align='mid', label='Scenario 4')
     ax.axvline(x=threshold_score, color='k', linestyle='--', linewidth=2, label='Threshold: {:.2f}'.format(threshold_score))
     ax.set_xlim([0.0, 1.0])
     ax.set_xticks(0.1 * np.arange(0, 11), fontsize=15)
@@ -106,14 +106,16 @@ class AnomalyTrainer(object):
                  config,
                  seed):
 
+        self.seed = seed
+
         config_file = config
         config = yaml.load(open(config_file), Loader=yaml.FullLoader)
         if config['mode'] == 'unsup':
-            log_dir = '{}_{}_unsup'.format(config['dataset']['name'], config['anom_dataset'])
+            log_dir = '{}_unsup_seed{}'.format(config['dataset']['name'], 0)
         elif config['mode'] == 'wsup':
-            log_dir = '{}_{}_m{}_cl{}_bc{}'.format(config['dataset']['name'], config['anom_dataset'], config['margin'], config['lambda_cl'], config['lambda_bc'])
+            log_dir = '{}_m{}_cl{}_bc{}_seed{}_nogg'.format(config['dataset']['name'], config['margin'], config['lambda_cl'], config['lambda_bc'], 0)
 
-        self.writer = SummaryWriter(log_dir=os.path.join('runs/ablation', log_dir))
+        self.writer = SummaryWriter(log_dir=os.path.join('runs/graphcodebert', log_dir))
         self.model_folder = os.path.join(self.writer.log_dir, 'checkpoints')
         os.makedirs(self.model_folder, exist_ok=True)
         shutil.copy(config_file, os.path.join(self.writer.log_dir, 'config.yaml'))
@@ -132,7 +134,6 @@ class AnomalyTrainer(object):
         self.world_size = len(self.gpu_ids)
         self.rank = rank
 
-        self.anom_dataset = config['anom_dataset']
         self.test_dataset = config['test_dataset']
         self.learning_rate = config['learning_rate']
         self.n_epochs = config['n_epochs']
@@ -208,8 +209,8 @@ class AnomalyTrainer(object):
         return total_loss_cl, total_loss_bc, total_label, total_score, total_prob, total_nl_vec, total_pl_vec
         
     def train(self):
-        train_loader = self.dataset.get_train_loaders(anom_dataset=self.anom_dataset)
-        valid_loader = self.dataset.get_train_loaders(anom_dataset=self.anom_dataset, dataset_load = 'valid')
+        train_loader = self.dataset.get_train_loaders()
+        valid_loader = self.dataset.get_train_loaders(dataset_load = 'valid')
 
         device = torch.device("cuda:{}".format(self.rank) if torch.cuda.is_available() else "cpu")
         self.train_folder = os.path.join(self.writer.log_dir, 'train')
@@ -288,7 +289,6 @@ class AnomalyTrainer(object):
                 self.writer.add_scalar('train/auc', train_auc, i)
                 print('Epoch: {}\tTrain AUC (CL): {:.4f}\tTrain AUC (BC): {:.4f}\tTrain AUC: {:.4f}'.format(i, train_auc_cl, train_auc_bc, train_auc))
 
-
             valid_loss_cl, valid_loss_bc, valid_label, valid_score, valid_prob, valid_nl_vec, valid_pl_vec = self._evaluate(valid_loader, device)
 
             valid_loss = valid_loss_cl * self.lambda_cl + valid_loss_bc * self.lambda_bc
@@ -343,187 +343,12 @@ class AnomalyTrainer(object):
         self.writer.flush()
         print('Finished training')
 
-
-    # write test code
-    def test(self, model_path=None):
-        anom_dict = {0: 'ID', 1: 'out-domain', 3: 'wrong-text', 2: 'shuffle', 4: 'buggy'}
-        test_loader = self.dataset.get_test_loaders(self.test_dataset, anom_dataset=self.anom_dataset)
-        device = torch.device('cuda:{}'.format(self.rank) if torch.cuda.is_available() else torch.device('cpu'))
-        self.test_folder = os.path.join(self.writer.log_dir, 'test')
-        os.makedirs(self.test_folder, exist_ok=True)
-
-        if self.world_size > 1:
-            self.model = DP(self.model, device_ids=range(self.world_size))
-
-        if model_path:
-            self.model.load_state_dict(torch.load(model_path))
-        else:
-            self.model.load_state_dict(torch.load(os.path.join(self.model_folder, 'best_model.pt')))
-        self.model.to(device)
-        
-        _, _, test_label, test_score, test_prob, test_nl_vec, test_pl_vec = self._evaluate(test_loader, device)
-
-        test_scores = (test_nl_vec @ test_pl_vec.T).detach().cpu().numpy()
-        
-        if self.dataset.anom_test > 0.0:
-            if self.mode == 'wsup':
-                test_anom = test_score * test_prob
-                test_auc_cl = roc_auc_score(np.where(test_label < 0, 0, 1), test_score)
-                test_auc_bc = roc_auc_score(np.where(test_label < 0, 0, 1), test_prob)
-                test_auc = roc_auc_score(np.where(test_label < 0, 0, 1), test_anom)
-                print('Test AUC (CL): {:.4f}\tTest AUC (BC): {:.4f}\tTest AUC (Anom): {:.4f}'.format(test_auc_cl, test_auc_bc, test_auc))
-
-                # find threshold so 95% of ID samples are classified as ID
-                id_score = sorted(copy.deepcopy(test_score[test_label >= 0]), reverse=True)
-                id_prob = sorted(copy.deepcopy(test_prob[test_label >= 0]), reverse=True)
-                id_anom = sorted(copy.deepcopy(test_anom[test_label >= 0]), reverse=True)
-                id_ratio = 0.95
-                threshold_score = id_score[int(id_ratio * len(id_score))]
-                threshold_prob = id_prob[int(id_ratio * len(id_prob))]
-                threshold_anom = id_anom[int(id_ratio * len(id_anom))]
-                if self.threshold is not None:
-                    if self.threshold == 'opt':
-                        threshold_anom = thresholds_opt
-                    else:
-                        threshold_anom = self.threshold
-
-                print('Threshold (CL): {:.4f}\tThreshold (BC): {:.4f}\tThreshold (anom): {:.4f}'.format(threshold_score, threshold_prob, threshold_anom))
-
-                plot_distribution(test_score, threshold_score, test_label, os.path.join(self.test_folder, 'contrastive_score_distribution.png'))
-                plot_distribution(test_prob, threshold_prob, test_label, os.path.join(self.test_folder, 'classification_score_distribution.png'))
-                plot_distribution(test_anom, threshold_anom, test_label, os.path.join(self.test_folder, 'anom_score_distribution.png'))
-                
-                for i in range(1, 5):
-                    print('Scenario {}: {}'.format(i, anom_dict[i]))
-                    result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                    scene = np.where((test_label >= 0) | (test_label == -i))[0]
-
-                    label = np.where(test_label[scene] < 0, 1, 0)
-                    score = np.where((test_score[scene] < threshold_score), 1, 0)
-                    result.loc['Contrastive'] = [accuracy_score(label, score), precision_score(label, score), recall_score(label, score), f1_score(label, score)]
-                    prob = np.where((test_prob[scene] < threshold_prob), 1, 0)
-                    result.loc['Classification'] = [accuracy_score(label, prob), precision_score(label, prob), recall_score(label, prob), f1_score(label, prob)]
-                    anom = np.where((test_anom[scene] < threshold_anom), 1, 0)
-                    result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-
-                    result.round(4).to_csv(os.path.join(self.test_folder, 'result_scenario_{}.csv'.format(i)))
-                    print('=====================================')
-
-                for i in range(1, 5):
-                    print('Scenario {}: {}'.format(i, anom_dict[i]))
-                    result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                    scene = np.where((test_label >= 0) | (test_label == -i))[0]
-
-                    label = np.where(test_label[scene] >= 0, 1, 0)
-                    score = np.where((test_score[scene] >= threshold_score), 1, 0)
-                    result.loc['Contrastive'] = [accuracy_score(label, score), precision_score(label, score), recall_score(label, score), f1_score(label, score)]
-                    prob = np.where((test_prob[scene] >= threshold_prob), 1, 0)
-                    result.loc['Classification'] = [accuracy_score(label, prob), precision_score(label, prob), recall_score(label, prob), f1_score(label, prob)]
-                    anom = np.where((test_anom[scene] >= threshold_anom), 1, 0)
-                    result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-
-                    result.round(4).to_csv(os.path.join(self.test_folder, 'result_scenario_id_{}.csv'.format(i)))
-                    print('=====================================')
-
-                print('ID')
-                result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                label = np.where(test_label >= 0, 1, 0)
-                score = np.where((test_score >= threshold_score), 1, 0)
-                result.loc['Contrastive'] = [accuracy_score(label, score), precision_score(label, score), recall_score(label, score), f1_score(label, score)]
-                prob = np.where((test_prob >= threshold_prob), 1, 0)
-                result.loc['Classification'] = [accuracy_score(label, prob), precision_score(label, prob), recall_score(label, prob), f1_score(label, prob)]
-                anom = np.where((test_anom >= threshold_anom), 1, 0)
-                result.loc['ID'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-                result.round(4).to_csv(os.path.join(self.test_folder, 'result_id.csv'))
-                print('=====================================')
-
-                print('All Scenarios')
-                result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                label = np.where(test_label < 0, 1, 0)
-                score = np.where((test_score < threshold_score), 1, 0)
-                result.loc['Contrastive'] = [accuracy_score(label, score), precision_score(label, score), recall_score(label, score), f1_score(label, score)]
-                prob = np.where((test_prob < threshold_prob), 1, 0)
-                result.loc['Classification'] = [accuracy_score(label, prob), precision_score(label, prob), recall_score(label, prob), f1_score(label, prob)]
-                anom = np.where((test_anom < threshold_anom), 1, 0)
-                result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-                result.round(4).to_csv(os.path.join(self.test_folder, 'result_all_scenarios.csv'))
-
-                pd.DataFrame({'score': test_score, 'prob': test_prob, 'anom': test_anom, 'label': test_label}).to_csv(os.path.join(self.test_folder, 'test_result_{}.csv'.format(self.test_dataset)), index=False)
-
-                if not self.lambda_bc:
-                    test_anom = test_score
-                    test_auc = test_auc_cl
-                elif not self.lambda_cl:
-                    test_anom = test_prob
-                    test_auc = test_auc_bc
-
-            
-            elif self.mode == 'unsup':
-                test_anom = np.array([test_scores[i, i] for i in range(len(test_scores))])
-                test_auc = roc_auc_score(np.where(test_label < 0, 0, 1), test_anom)
-                print('Test AUC (Anom): {:.4f}'.format(test_auc))
-                id_anom = sorted(copy.deepcopy(test_anom[test_label >= 0]), reverse=True)
-                id_ratio = 0.95
-                threshold_anom = id_anom[int(id_ratio * len(id_anom))]
-
-                if self.threshold is not None:
-                    if self.threshold == 'opt':
-                        threshold_anom = thresholds_opt
-                    else:
-                        threshold_anom = self.threshold
-
-                print('Threshold (Anom): {:.4f}'.format(threshold_anom))
-
-                plot_distribution(test_anom, threshold_anom, test_label, os.path.join(self.test_folder, 'anom_score_distribution.png'))
-
-                for i in range(1, 5):
-                    print('Scenario {}: {}'.format(i, anom_dict[i]))
-                    result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                    scene = np.where((test_label >= 0) | (test_label == -i))[0]
-                    label = np.where(test_label[scene] < 0, 1, 0)
-                    anom = np.where((test_anom[scene] < threshold_anom), 1, 0)
-                    result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-                    result.round(4).to_csv(os.path.join(self.test_folder, 'result_scenario_{}.csv'.format(i)))
-                    print('=====================================')
-
-                for i in range(1, 5):
-                    print('Scenario {}: {}'.format(i, anom_dict[i]))
-                    result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                    scene = np.where((test_label >= 0) | (test_label == -i))[0]
-                    label = np.where(test_label[scene] >= 0, 1, 0)
-                    anom = np.where((test_anom[scene] >= threshold_anom), 1, 0)
-                    result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-                    result.round(4).to_csv(os.path.join(self.test_folder, 'result_scenario_id_{}.csv'.format(i)))
-                    print('=====================================')
-
-                print('ID')
-                result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                label = np.where(test_label >= 0, 1, 0)
-                anom = np.where((test_anom >= threshold_anom), 1, 0)
-                result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-                result.round(4).to_csv(os.path.join(self.test_folder, 'result_id.csv'))
-                print('=====================================')
-
-                print('All Scenarios')
-                result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-                label = np.where(test_label < 0, 1, 0)
-                anom = np.where((test_anom < threshold_anom), 1, 0)
-                result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-                result.round(4).to_csv(os.path.join(self.test_folder, 'result_all_scenarios.csv'))
-
-                pd.DataFrame({'anom': test_anom, 'label': test_label}).to_csv(os.path.join(self.test_folder, 'test_result_{}.csv'.format(self.test_dataset)), index=False)
-
-            
-            plot_aucroc(test_anom, test_auc, test_label, os.path.join(self.test_folder, 'roc_curve.png'))
-                
-        print('Finished testing')
-
     
     def test_baseline_metrics(self, model_path=None):
         anom_dict = {0: 'ID', 1: 'out-domain', 3: 'wrong-text', 2: 'shuffle', 4: 'buggy'}
-        test_loader = self.dataset.get_test_loaders(self.test_dataset, anom_dataset=self.anom_dataset)
+        test_loader = self.dataset.get_test_loaders(self.test_dataset, dataset_load = 'test')
         device = torch.device('cuda:{}'.format(self.rank) if torch.cuda.is_available() else torch.device('cpu'))
-        self.test_folder = os.path.join(self.writer.log_dir, 'test')
+        self.test_folder = os.path.join(self.writer.log_dir, 'test_base', str(self.seed))
         os.makedirs(self.test_folder, exist_ok=True)
 
         if self.world_size > 1:
@@ -599,11 +424,11 @@ class AnomalyTrainer(object):
 
     def test_main_task(self, model_path=None):
         anom_dict = {0: 'ID', 1: 'out-domain', 3: 'wrong-text', 4: 'buggy'}
-        test_loader = self.dataset.get_test_loaders(self.test_dataset, anom_dataset=self.anom_dataset, test_type='main_task')
-        codebase_loader = self.dataset.get_test_loaders(self.test_dataset, anom_dataset=self.anom_dataset, dataset_load = 'codebase')
+        test_loader = self.dataset.get_test_loaders(self.test_dataset, test_type='test')
+        codebase_loader = self.dataset.get_test_loaders(self.test_dataset, dataset_load = 'codebase')
 
         device = torch.device('cuda:{}'.format(self.rank) if torch.cuda.is_available() else torch.device('cpu'))
-        self.test_folder = os.path.join(self.writer.log_dir, 'test_main_task_2')
+        self.test_folder = os.path.join(self.writer.log_dir, 'test_main', str(self.seed))
         os.makedirs(self.test_folder, exist_ok=True)
 
         if self.world_size > 1:
@@ -612,7 +437,9 @@ class AnomalyTrainer(object):
         if model_path:
             self.model.load_state_dict(torch.load(model_path))
         else:
-            self.model.load_state_dict(torch.load(os.path.join(self.model_folder, 'best_model.pt')))
+            checkpoint = torch.load(os.path.join(self.model_folder, 'best_model.pt'), map_location='cpu')
+            self.model.load_state_dict(checkpoint)
+            # self.model.load_state_dict(torch.load(os.path.join(self.model_folder, 'best_model.pt')))
         self.model.to(device)
         
         _, _, test_label, test_score, test_prob, test_nl_vec, test_pl_vec = self._evaluate(test_loader, device)
@@ -693,82 +520,3 @@ class AnomalyTrainer(object):
         print('Filtered Test MRR: {:.4f}'.format(filtered_test_mrr))
         
         print('Finished testing main task')
-
-
-    def test_S2(self, model_path=None):
-        test_loader = self.dataset.get_test_loaders(self.test_dataset, anom_dataset=self.anom_dataset, dataset_load = 'scenario2')
-        device = torch.device('cuda:{}'.format(self.rank) if torch.cuda.is_available() else torch.device('cpu'))
-        self.test_folder = os.path.join(self.writer.log_dir, 'test_S2')
-        os.makedirs(self.test_folder, exist_ok=True)
-
-        if self.world_size > 1:
-            self.model = DP(self.model, device_ids=range(self.world_size))
-
-        if model_path:
-            self.model.load_state_dict(torch.load(model_path))
-        else:
-            self.model.load_state_dict(torch.load(os.path.join(self.model_folder, 'best_model.pt')))
-        self.model.to(device)
-        
-        _, _, test_label, test_score, test_prob, test_nl_vec, test_pl_vec = self._evaluate(test_loader, device)
-
-        test_scores = np.matmul(test_nl_vec, test_pl_vec.T)      
-        test_anom = test_score * test_prob
-
-        print(test_score)
-        print(test_label)
-
-        # find threshold so 95% of ID samples are classified as ID
-        id_score = sorted(copy.deepcopy(test_score[test_label >= 0]), reverse=True)
-        id_prob = sorted(copy.deepcopy(test_prob[test_label >= 0]), reverse=True)
-        id_anom = sorted(copy.deepcopy(test_anom[test_label >= 0]), reverse=True)
-        id_ratio = 0.95
-        threshold_score = id_score[int(id_ratio * len(id_score))]
-        threshold_prob = id_prob[int(id_ratio * len(id_prob))]
-        threshold_anom = id_anom[int(id_ratio * len(id_anom))]
-        if self.threshold is not None:
-            if self.threshold == 'opt':
-                threshold_anom = thresholds_opt
-            else:
-                threshold_anom = self.threshold
-
-        print('Threshold (CL): {:.4f}\tThreshold (BC): {:.4f}\tThreshold (anom): {:.4f}'.format(threshold_score, threshold_prob, threshold_anom))
-        
-        i = 2
-        result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-        scene = np.where((test_label >= 0) | (test_label == -i))[0]
-        label = np.where(test_label[scene] < 0, 1, 0)
-        score = np.where((test_score[scene] < threshold_score), 1, 0)
-        result.loc['Contrastive'] = [accuracy_score(label, score), precision_score(label, score), recall_score(label, score), f1_score(label, score)]
-        prob = np.where((test_prob[scene] < threshold_prob), 1, 0)
-        result.loc['Classification'] = [accuracy_score(label, prob), precision_score(label, prob), recall_score(label, prob), f1_score(label, prob)]
-        anom = np.where((test_anom[scene] < threshold_anom), 1, 0)
-        result.loc['Anomaly'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-
-        result.round(4).to_csv(os.path.join(self.test_folder, 'result_scenario_{}.csv'.format(i)))
-        print('=====================================')
-
-
-        result = pd.DataFrame(columns=['auc-roc', 'fpr95', 'aupr-ID', 'aupr-OOD'])
-        label = np.where(test_label[scene] < 0, 0, 1)
-        OOD_label = np.where(test_label[scene] < 0, 1, 0)
-        result.loc['Contrastive'] = [roc_auc_score(label, test_score[scene]), fpr_and_fdr_at_recall(label, test_score[scene]), average_precision_score(label, test_score[scene]), average_precision_score(OOD_label, [-x for x in test_score[scene]])]
-        result.loc['Classification'] = [roc_auc_score(label, test_prob[scene]), fpr_and_fdr_at_recall(label, test_prob[scene]), average_precision_score(label, test_prob[scene]), average_precision_score(OOD_label, [-x for x in test_prob[scene]])]
-        result.loc['Anomaly'] = [roc_auc_score(label, test_anom[scene]), fpr_and_fdr_at_recall(label, test_anom[scene]), average_precision_score(label, test_anom[scene]), average_precision_score(OOD_label, [-x for x in test_anom[scene]])]
-
-        result.round(4).to_csv(os.path.join(self.test_folder, 'result_scenario_auc_{}.csv'.format(i)))
-        print('=====================================')   
-
-        print('ID')
-        result = pd.DataFrame(columns=['Accuracy', 'Precision', 'Recall', 'F1'])
-        label = np.where(test_label >= 0, 1, 0)
-        score = np.where((test_score >= threshold_score), 1, 0)
-        result.loc['Contrastive'] = [accuracy_score(label, score), precision_score(label, score), recall_score(label, score), f1_score(label, score)]
-        prob = np.where((test_prob >= threshold_prob), 1, 0)
-        result.loc['Classification'] = [accuracy_score(label, prob), precision_score(label, prob), recall_score(label, prob), f1_score(label, prob)]
-        anom = np.where((test_anom >= threshold_anom), 1, 0)
-        result.loc['ID'] = [accuracy_score(label, anom), precision_score(label, anom), recall_score(label, anom), f1_score(label, anom)]
-        result.round(4).to_csv(os.path.join(self.test_folder, 'result_id.csv'))
-        print('=====================================')
-            
-        print('Finished testing S2')

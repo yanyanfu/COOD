@@ -1,15 +1,7 @@
-# COOD: Towards More Trustworthy ML Models for Code: Detecting Out-of-Distribution via Multi-modal Contrastive Learning
+# Towards More Trustworthy Deep Code Models by Enabling Out-of-Distribution Detection
 
 ## Introduction
-This is the official codebase for the paper "Towards More Trustworthy ML Models for Code: Detecting Out-of-Distribution via Multi-modal Contrastive Learning". In this work, we propose a general-purpose multi-modal OOD detection framework for code related pretrained
-models that combines contrastive learning and a binary classifier. To achieve this, we employed a
-margin-based loss in contrastive learning to maximize the difference in similarity scores between ID
-and OOD code pairs. In addition, we introduced a binary OOD rejection network that can be adapted
-to be used in conjunction with contrastive learning for further enhancing detection performance. The
-evaluation results demonstrated that the integration of the rejection network and contrastive
-learning can achieve superior performance in detecting all four OOD scenarios for multi-modal
-NL-PL data. Additionally, our model can be applied to the downstream code understanding task, namely code search, achieving comparable
-performance to several recent pretrained models.
+This is the official codebase for the paper "Towards More Trustworthy Deep Code Models by Enabling Out-of-Distribution Detection". In this work, We proposed two multi-modal OOD detection methods for code related pretrained ML models; namely unsupervised COOD and weakly-supervised COOD+. The COOD merely leveraged unsupervised contrastive learning to identify OOD samples. As an extension of COOD, COOD+ combined contrastive learning and a binary classifier for OOD detection using a small number of labelled OOD samples. To reap the benefits of these two modules, we also devised a new scoring metric to fuse their prediction results. The evaluation results demonstrated that the integration of the rejection network and contrastive learning can achieve superior performance in detecting all four OOD scenarios for multi-modal NL-PL data. Additionally, our models can be applied to the downstream task, achieving comparable performance to several current pre-trained models.
 
 ## Training Prerequisites
 - CUDA 11.5

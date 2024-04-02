@@ -1,19 +1,17 @@
-import hashlib
-import os
-import urllib
-import warnings
-import copy
 from typing import Any, Union, List, Dict, Tuple
 from tqdm import tqdm
 import numpy as np
 
 import torch
+torch.cuda.empty_cache()
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss, MSELoss
 from transformers import RobertaConfig, RobertaModel
+
+
 
 class LinearLayer(nn.Module):
     def __init__(self, sizes: Tuple[int, ...], dropout=None, bias=True, act=nn.Tanh):
@@ -79,7 +77,7 @@ class AnomalyDetectionModel(nn.Module):
         self.classifier = classifier
         self.code_info = LinearLayer((num_features, num_features))
         self.text_info = LinearLayer((num_features, num_features))
-        self.anom_class = LinearLayer((num_features * 4, num_features // 4, 1), dropout=dropout, act=nn.Tanh)
+        self.anom_class = LinearLayer((num_features * 4, num_features // 2, 1), dropout=dropout, act=nn.Tanh)
 
     def forward(self, code, text):
         code_features = self.encoder(code, attention_mask=code.ne(1))[0]
@@ -89,7 +87,6 @@ class AnomalyDetectionModel(nn.Module):
 
         # feature concatenation
         mm_features = torch.cat([code_features, text_features, text_features - code_features, text_features + code_features], dim=1)
-        # mm_features = torch.cat([code_features, text_features], dim=1)
 
         # anomaly detection
         anom_output = self.anom_class(mm_features).squeeze(-1)

@@ -1,11 +1,12 @@
 import torch
+torch.cuda.empty_cache()
 import numpy as np
 import os
 from model.train import AnomalyTrainer
 import argparse
 
 os.environ['CUDE_DEVICE_ORDER'] = 'PCI_BUS_ID'
-os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 def setup_global_config(rank, world_size):
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -23,14 +24,13 @@ def distribute(rank, world_size, config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='config_cxg.yaml')
+    parser.add_argument('--config', type=str, default='config_python.yaml')
     parser.add_argument('--mode', type=str, default='ood')
     parser.add_argument('--train', dest='train', action='store_true')
-    parser.add_argument('--test', dest='test', action='store_true')
     parser.add_argument('--test_main_task', dest='test_main_task', action='store_true')
     parser.add_argument('--test_baseline_metrics', dest='test_baseline_metrics', action='store_true')
     parser.add_argument('--ddp', dest='ddp', action='store_true')
-    parser.add_argument('--gpu', type=int, default=1)
+    parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--model_path', type=str, default=None)
     parser.set_defaults(train=False)
@@ -52,10 +52,6 @@ if __name__ == "__main__":
         trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
         trainer.test_main_task(args.model_path)
 
-    elif args.test_baseline_metrics:
-        trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
-        trainer.test_baseline_metrics(args.model_path)
-    
     else:
         trainer = AnomalyTrainer(args.gpu, args.config, args.seed)
-        trainer.test(args.model_path)
+        trainer.test_baseline_metrics(args.model_path)

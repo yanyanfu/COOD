@@ -9,18 +9,14 @@ class ContrastiveLoss(nn.Module):
         self.mode = mode
         self.task = task
         self.margin = margin
-        # self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
         
     def forward(self, features, label=None):
         code_features, text_features = features
         if self.mode == "margin":
             sim = (code_features @ text_features.t()).clamp(min=0.0)
             sim_diag = torch.diag(sim).view(code_features.shape[0], 1)
-            # sim_diag[ood_indices] = 0.0
             mask = torch.eye(sim.shape[0], device=sim.device).bool()
             ood_indices = torch.where(label < 0)[0]
-            # mask[ood_indices, ood_indices] = False
-            # sim_diag[ood_indices] = 0.0
             sim_diag[ood_indices] = self.margin * 2
 
             ct_diag = sim_diag.expand_as(sim)
