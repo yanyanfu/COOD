@@ -122,8 +122,8 @@ class AnomalyTrainer(object):
 
         self.dataset = AnomalyDatasetWrapper(**config['dataset'])
         self.model = AnomalyDetectionModel(**config['model'])
-        print('Model summary:')
-        summary(self.model)
+        # print('Model summary:')
+        # summary(self.model)
 
         self.mode = config['mode']
         self.task = config['task']
