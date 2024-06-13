@@ -5,7 +5,7 @@ In this work, We proposed two multi-modal OOD detection methods for code-related
 
 ## Ablation Study
 
-The scenario-specific results for ablation study is shown below to underscore the necessaity of each module.
+The scenario-specific results for ablation study is shown below to underscore the necessaity of each module in COOD+.
 
 <img src="figs/as.png" alt="visual results" width="720">
 
